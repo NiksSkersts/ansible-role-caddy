@@ -14,7 +14,7 @@
     update_cache: true
 
 - name: Get Certs
-  when: get_cert
+  when: get_cert_cloudflare
   block:
     - name: Set ~/cloudflare.ini
       ansible.builtin.copy:
@@ -24,44 +24,44 @@
         mode: "740"
         content: |
           # Managed by Ansible
-          dns_cloudflare_api_token = {{ cloudflare.token }}
+          dns_cloudflare_api_token = {{ cloudflare_token }}
 
     - name: Run Certbot
       ansible.builtin.command:
-        /usr/bin/certbot certonly -m {{ smtp.username }} --agree-tos --dns-cloudflare --dns-cloudflare-credentials ~/cloudflare.ini --dns-cloudflare-propagation-seconds 120 -d *.nikssk.id.lv
+        /usr/bin/certbot certonly -m {{ certbot_email }} --agree-tos --dns-cloudflare --dns-cloudflare-credentials ~/cloudflare.ini --dns-cloudflare-propagation-seconds 120 -d {{ domain }}
 
-- name: Set permissions for certificates
-  ansible.builtin.file:
-    mode: '650'
-    owner: root
-    group: www-data
-    recurse: true
-    dest: '{{ caddy.cert_path }}'
+    - name: Set permissions for cloudflare certificates
+      ansible.builtin.file:
+        mode: '650'
+        owner: root
+        group: www-data
+        recurse: true
+        dest: '{{ cert_path }}'
 
-# TODO deploy files alongside docker image instead.
-- name: Deploy Bitwarden backend cert
-  when: false
+- name: Deploy backend certificates
+  when: backend_cert_defs | length>0
+  loop: '{{ backend_cert_defs }}'
   ansible.builtin.copy:
-    owner: root
-    group: www-data
-    mode: '650'
-    dest: '{{ bitwarden.backend_cert_path }}'
-    content: '{{ bitwarden.backend_cert }}'
+    owner: '{{ caddy_user }}'
+    group: '{{ caddy_group }}'
+    mode: '{{ item.mode }}'
+    dest: '{{ item.dest }}'
+    content: '{{ item.content }}'
 
 - name: Deploy CaddyFile
-  loop: "{{ docker_defs }}"
+  loop: "{{ caddy_defs }}"
   ansible.builtin.blockinfile:
-    owner: root
-    group: www-data
+    owner: '{{ caddy_user }}'
+    group: '{{ caddy_group }}'
     mode: '650'
     marker_begin: "#{{ item.domain }}"
     marker_end: "##{{ item.domain }}"
-    dest: /etc/caddy/Caddyfile
+    dest: '{{ caddy_config_path }}'
     create: true
     block: |
       https://{{ item.domain }} {
-        {{ caddy.tls }}
-        reverse_proxy {{ item.rp_path }} {
+        {{ item.tls }}
+        reverse_proxy {{ item.reverse_proxy_path }} {
           header_up Host {host}
           header_up X-Real-IP {remote_host}
           header_up X-Forwarded-For {remote_host}
