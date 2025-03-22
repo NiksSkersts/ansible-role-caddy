@@ -60,7 +60,7 @@
     create: true
     block: |
       https://{{ item.domain }} {
-        {{ item.tls }}
+        {{ caddy_config_tls }}
         reverse_proxy {{ item.reverse_proxy_path }} {
           header_up Host {host}
           header_up X-Real-IP {remote_host}
