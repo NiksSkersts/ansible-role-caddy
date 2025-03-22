@@ -1,0 +1,84 @@
+---
+# tasks file for vm-role-caddy
+
+- name: Install packages
+  ansible.builtin.apt:
+    name:
+      - certbot
+      - python3-certbot
+      - python3-certbot-dns-cloudflare
+      - python3-certbot-nginx
+      - python3-certbot-dns-standalone
+      - caddy
+    state: present
+    update_cache: true
+
+- name: Get Certs
+  when: get_cert
+  block:
+    - name: Set ~/cloudflare.ini
+      ansible.builtin.copy:
+        dest: ~/cloudflare.ini
+        owner: root
+        group: root
+        mode: "740"
+        content: |
+          # Managed by Ansible
+          dns_cloudflare_api_token = {{ cloudflare.token }}
+
+    - name: Run Certbot
+      ansible.builtin.command:
+        /usr/bin/certbot certonly -m {{ smtp.username }} --agree-tos --dns-cloudflare --dns-cloudflare-credentials ~/cloudflare.ini --dns-cloudflare-propagation-seconds 120 -d *.nikssk.id.lv
+
+- name: Set permissions for certificates
+  ansible.builtin.file:
+    mode: '650'
+    owner: root
+    group: www-data
+    recurse: true
+    dest: '{{ caddy.cert_path }}'
+
+# TODO deploy files alongside docker image instead.
+- name: Deploy Bitwarden backend cert
+  when: false
+  ansible.builtin.copy:
+    owner: root
+    group: www-data
+    mode: '650'
+    dest: '{{ bitwarden.backend_cert_path }}'
+    content: '{{ bitwarden.backend_cert }}'
+
+- name: Deploy CaddyFile
+  loop: "{{ docker_defs }}"
+  ansible.builtin.blockinfile:
+    owner: root
+    group: www-data
+    mode: '650'
+    marker_begin: "#{{ item.domain }}"
+    marker_end: "##{{ item.domain }}"
+    dest: /etc/caddy/Caddyfile
+    create: true
+    block: |
+      https://{{ item.domain }} {
+        {{ caddy.tls }}
+        reverse_proxy {{ item.rp_path }} {
+          header_up Host {host}
+          header_up X-Real-IP {remote_host}
+          header_up X-Forwarded-For {remote_host}
+          header_up X-Forwarded-Proto {scheme}
+        {% if item.transport is defined %}
+        {{ item.transport | default(omit)}}
+        {% endif %}
+        }
+        {% if item.request_body is defined %}
+        {{ item.request_body | default(omit)}}
+        {% endif %}
+        encode gzip
+        file_server
+      }
+
+- name: Restart Caddy
+  ansible.builtin.service:
+    name: caddy
+    enabled: true
+    state: restarted
